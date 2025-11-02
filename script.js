@@ -399,6 +399,17 @@ function initNeuroNav() {
     console.log("[✅] Calibration complete!");
     transformUIAfterCalibration();
     createGazeCursor();
+    setTimeout(() => {
+      const minimizeBtn = document.querySelector(
+        "#main-controls button:nth-child(3)"
+      );
+      if (minimizeBtn) {
+        console.log("Auto-minimizing overlay after calibration...");
+        minimizeBtn.click();
+      } else {
+        console.warn("Minimize button not found after calibration.");
+      }
+    }, 1000);
   }
 
   function handleIrisTrackingForCalibration(landmarks) {
