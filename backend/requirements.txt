@@ -1,0 +1,6 @@
+flask
+flask-cors
+fer
+opencv-python
+tensorflow
+mtcnn

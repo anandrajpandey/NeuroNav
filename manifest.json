@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "NeuroNav – Eye & Gesture Navigation",
+  "version": "1.0",
+  "description": "Control webpages using MediaPipe Iris and facial gestures.",
+  "permissions": ["activeTab", "scripting", "storage", "camera"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["popup_page.html", "script.js", "style.css"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "icons": {
+    "128": "icons/icon128.png"
+  }
+}
