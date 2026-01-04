@@ -260,76 +260,75 @@ function initNeuroNav() {
   }
 
   function handleIrisTracking(landmarks) {
+    // Always update timestamp first
+    lastIrisUpdateTime = Date.now();
     if (detectionPaused || !calibrationDone) return;
 
+    // ---- IRIS CENTER ----
     const leftIris = landmarks.slice(468, 473);
     const rightIris = landmarks.slice(473, 478);
     const leftCenter = averageIris(leftIris);
     const rightCenter = averageIris(rightIris);
-    const avgY = (leftCenter.y + rightCenter.y) / 2;
+
     const avgX = (leftCenter.x + rightCenter.x) / 2;
+    const avgY = (leftCenter.y + rightCenter.y) / 2;
 
-    lastIrisUpdateTime = Date.now();
-
+    // ---- NORMALIZATION ----
     const { top, bottom, left, right } = calibrationData;
-    const normY = (avgY - top.y) / (bottom.y - top.y);
     const normX = (avgX - left.x) / (right.x - left.x);
-
-    const now = Date.now();
-    if (scrollingEnabled && now - lastScrollTime > 150) {
-      if (normY < 0.3) {
-        console.log("[⬆️] Looking up — scroll up");
-        window.scrollBy(0, -30);
-      } else if (normY > 0.7) {
-        console.log("[⬇️] Looking down — scroll down");
-        window.scrollBy(0, 30);
-      }
-      lastScrollTime = now;
-    }
+    const normY = (avgY - top.y) / (bottom.y - top.y);
 
     const screenX = normX * window.innerWidth;
     const screenY = normY * window.innerHeight;
-    if (gazeCursor && calibrationDone) {
-      // smooth motion
-      if (!window.gazeSmooth) window.gazeSmooth = { x: screenX, y: screenY };
-      gazeCursor.style.transform = `translate(${window.gazeSmooth.x}px, ${window.gazeSmooth.y}px)`;
-      window.gazeSmooth.x = 0.15 * screenX + 0.85 * window.gazeSmooth.x;
-      window.gazeSmooth.y = 0.15 * screenY + 0.85 * window.gazeSmooth.y;
-    }
-    const blocks = getClickableBlocks();
-    const nearestBlock = findNearestBlock(screenX, screenY, blocks);
 
-    if (nearestBlock && nearestBlock.element && nearestBlock !== currentBlock) {
-      if (currentBlock && currentBlock.element) {
+    // ---- INIT SMOOTH STATE ----
+    if (!window.gazeSmooth) {
+      window.gazeSmooth = { x: screenX, y: screenY };
+    }
+
+    // ---- DEAD-ZONE ----
+    const DEADZONE = 6;
+    const dx = screenX - window.gazeSmooth.x;
+    const dy = screenY - window.gazeSmooth.y;
+    const ignoreMovement = Math.abs(dx) < DEADZONE && Math.abs(dy) < DEADZONE;
+
+    // ---- ADAPTIVE SMOOTHING ----
+    if (!ignoreMovement) {
+      const speed = Math.hypot(dx, dy);
+      const alpha = Math.min(0.35, Math.max(0.08, speed / 120));
+
+      window.gazeSmooth.x = alpha * screenX + (1 - alpha) * window.gazeSmooth.x;
+      window.gazeSmooth.y = alpha * screenY + (1 - alpha) * window.gazeSmooth.y;
+    }
+
+    // ---- RENDER CURSOR ----
+    if (gazeCursor) {
+      gazeCursor.style.transform = `translate(${window.gazeSmooth.x}px, ${window.gazeSmooth.y}px)`;
+    }
+
+    // ---- SCROLL (USING SMOOTHED GAZE) ----
+    const now = Date.now();
+    if (scrollingEnabled && now - lastScrollTime > 150) {
+      if (normY < 0.3) window.scrollBy(0, -30);
+      else if (normY > 0.7) window.scrollBy(0, 30);
+      lastScrollTime = now;
+    }
+
+    // ---- BLOCK SELECTION (USE SMOOTHED COORDS) ----
+    const blocks = getClickableBlocks();
+    const nearestBlock = findNearestBlock(
+      window.gazeSmooth.x,
+      window.gazeSmooth.y,
+      blocks
+    );
+
+    if (nearestBlock && nearestBlock !== currentBlock) {
+      if (currentBlock?.element)
         currentBlock.element.classList.remove("gaze-highlight");
-      }
+
       currentBlock = nearestBlock;
       highlightBlock(currentBlock.element);
     }
-    /* ---------------- CHECK FOR LOST GAZE ---------------- */
-    /* ---------------- CHECK FOR LOST GAZE ---------------- */
-    setInterval(() => {
-      const timeSinceLast = Date.now() - lastIrisUpdateTime;
-      if (timeSinceLast > 5000 && gazeCursor && calibrationDone) {
-        console.log("[🌀] Gaze lost — recentering cursor and block.");
-
-        const centerX = window.innerWidth / 2;
-        const centerY = window.innerHeight / 2;
-
-        // Smooth animation back to center
-        gazeCursor.style.transition = "transform 0.6s ease-out";
-        gazeCursor.style.transform = `translate(${centerX}px, ${centerY}px)`;
-
-        // After recentering, highlight the block at center
-        setTimeout(() => {
-          const target = document.elementFromPoint(centerX, centerY);
-          if (target) {
-            highlightBlock(target);
-          }
-          gazeCursor.style.transition = "transform 0.05s linear";
-        }, 650);
-      }
-    }, 1000);
   }
 
   /* ---------------- MEDIAPIPE INITIALIZATION ---------------- */
@@ -359,6 +358,25 @@ function initNeuroNav() {
     height: 480,
   });
   camera.start();
+  // ----- LOST GAZE WATCHDOG (RUNS ONCE) -----
+  setInterval(() => {
+    if (!calibrationDone || !gazeCursor) return;
+
+    if (Date.now() - lastIrisUpdateTime > 5000) {
+      console.log("[🌀] Gaze lost — recentring");
+
+      const cx = window.innerWidth / 2;
+      const cy = window.innerHeight / 2;
+
+      window.gazeSmooth = { x: cx, y: cy };
+      gazeCursor.style.transition = "transform 0.4s ease-out";
+      gazeCursor.style.transform = `translate(${cx}px, ${cy}px)`;
+
+      setTimeout(() => {
+        gazeCursor.style.transition = "transform 0.05s linear";
+      }, 450);
+    }
+  }, 1000);
 
   /* ---------------- CALIBRATION ---------------- */
   const dots = [
@@ -428,27 +446,39 @@ function initNeuroNav() {
 
 /* ---------------- AFTER CALIBRATION: TRANSFORM UI ---------------- */
 function transformUIAfterCalibration() {
+  const overlay = document.getElementById("neuronav-overlay");
   const startBtn = document.getElementById("start-calibration");
   if (startBtn) startBtn.remove();
 
+  /* 🔧 MAKE OVERLAY NON-BLOCKING */
+  overlay.style.background = "transparent";
+  overlay.style.pointerEvents = "none"; // allow page interaction
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.zIndex = "999999";
+
+  /* 🎛️ CONTROLS CONTAINER */
   const controls = document.createElement("div");
   controls.id = "main-controls";
   controls.style = `
-    position: absolute;
+    position: fixed;
     bottom: 20px;
     left: 50%;
     transform: translateX(-50%);
     display: flex;
     gap: 10px;
     z-index: 1000000;
+    pointer-events: auto; /* ✅ clickable */
   `;
-  document.getElementById("neuronav-overlay").appendChild(controls);
+  overlay.appendChild(controls);
 
-  // Pause/Resume Button
+  /* ⏸️ Pause / Resume */
   const pauseBtn = document.createElement("button");
   pauseBtn.textContent = "⏸️ Pause";
   pauseBtn.style = baseBtnStyle();
-  controls.appendChild(pauseBtn);
   pauseBtn.onclick = () => {
     detectionPaused = !detectionPaused;
     pauseBtn.textContent = detectionPaused ? "▶️ Resume" : "⏸️ Pause";
@@ -456,22 +486,23 @@ function transformUIAfterCalibration() {
       detectionPaused ? "[⏸️] Detection paused." : "[▶️] Detection resumed."
     );
   };
+  controls.appendChild(pauseBtn);
 
-  // Kill Button
+  /* ✖ Stop */
   const killBtn = document.createElement("button");
   killBtn.textContent = "✖ Stop";
   killBtn.style = baseBtnStyle();
-  controls.appendChild(killBtn);
   killBtn.onclick = stopNeuroNav;
+  controls.appendChild(killBtn);
 
-  // Minimize Button
+  /* ↘️ Minimize */
   const minimizeBtn = document.createElement("button");
   minimizeBtn.textContent = "↘️ Minimize";
   minimizeBtn.style = baseBtnStyle();
-  controls.appendChild(minimizeBtn);
   minimizeBtn.onclick = minimizeOverlay;
+  controls.appendChild(minimizeBtn);
 
-  console.log("[🎛️] UI transformed: added pause/resume, minimize, stop.");
+  console.log("[🎛️] UI transformed: overlay transparent, controls active.");
 }
 
 /* ---------------- MINIMIZE / DRAG / STOP ---------------- */
