@@ -243,7 +243,6 @@ function initNeuroNav() {
         outOfBoundsSince = null; // reset timer
       }
     } else {
-      // If cursor comes back, reset timer
       outOfBoundsSince = null;
     }
   }, 500);
