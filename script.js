@@ -274,38 +274,38 @@ function initNeuroNav() {
 
     // ---- NORMALIZATION ----
     const { top, bottom, left, right } = calibrationData;
+    if (!top || !bottom || !left || !right) return;
 
     let normX = (avgX - left.x) / (right.x - left.x);
     let normY = (avgY - top.y) / (bottom.y - top.y);
 
-    // 🛑 HARD CLAMP (CRITICAL)
+    // ---- HARD CLAMP ----
     normX = Math.min(1, Math.max(0, normX));
     normY = Math.min(1, Math.max(0, normY));
 
-    let screenX = normX * window.innerWidth;
-    let screenY = normY * window.innerHeight;
+    const screenX = normX * window.innerWidth;
+    const screenY = normY * window.innerHeight;
 
     // ---- INIT SMOOTH STATE ----
     if (!window.gazeSmooth) {
       window.gazeSmooth = { x: screenX, y: screenY };
     }
 
-    // ---- DEAD-ZONE ----
-    const DEADZONE = 6;
+    // ---- DEAD-ZONE (SCREEN-AWARE) ----
+    const DEADZONE = Math.max(8, window.innerWidth * 0.004);
     const dx = screenX - window.gazeSmooth.x;
     const dy = screenY - window.gazeSmooth.y;
-    const ignoreMovement = Math.abs(dx) < DEADZONE && Math.abs(dy) < DEADZONE;
 
-    // ---- ADAPTIVE SMOOTHING ----
-    if (!ignoreMovement) {
+    if (Math.abs(dx) > DEADZONE || Math.abs(dy) > DEADZONE) {
       const speed = Math.hypot(dx, dy);
-      const alpha = Math.min(0.35, Math.max(0.08, speed / 120));
 
+      // ---- ADAPTIVE SMOOTHING ----
+      const alpha = Math.min(0.25, Math.max(0.05, speed / 200));
       window.gazeSmooth.x = alpha * screenX + (1 - alpha) * window.gazeSmooth.x;
       window.gazeSmooth.y = alpha * screenY + (1 - alpha) * window.gazeSmooth.y;
     }
 
-    // 🛑 SAFETY CLAMP AFTER SMOOTHING
+    // ---- SAFETY CLAMP ----
     window.gazeSmooth.x = Math.min(
       window.innerWidth,
       Math.max(0, window.gazeSmooth.x)
@@ -315,7 +315,7 @@ function initNeuroNav() {
       Math.max(0, window.gazeSmooth.y)
     );
 
-    // ✅ STORE LAST VALID GAZE
+    // ---- STORE LAST VALID GAZE ----
     lastValidGaze.x = window.gazeSmooth.x;
     lastValidGaze.y = window.gazeSmooth.y;
 
