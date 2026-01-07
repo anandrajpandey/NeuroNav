@@ -1,33 +1,48 @@
 if (window.neuroNavLoaded) {
-  console.log("[ℹ️] NeuroNav already running");
+  console.log(" NeuroNav already running");
 } else {
   window.neuroNavLoaded = true;
-  console.log("[🧠] NeuroNav starting...");
+  console.log(" NeuroNav starting...");
 
-  // Inject CSS
+  // Prepare CSS (DO NOT inject into document.head)
   const styleEl = document.createElement("link");
   styleEl.rel = "stylesheet";
   styleEl.type = "text/css";
   styleEl.href = chrome.runtime.getURL("style.css");
-  document.head.appendChild(styleEl);
 
-  console.log("[🎨] Loaded CSS from:", styleEl.href);
-  document.head.appendChild(styleEl);
-
-  // Inject HTML directly into current page
-  console.log(chrome.runtime.getURL("popup_page.html"));
+  console.log(" Loaded CSS from:", styleEl.href);
 
   fetch(chrome.runtime.getURL("popup_page.html"))
     .then((r) => r.text())
     .then((html) => {
       const container = document.createElement("div");
       container.id = "neuronav-overlay";
-      container.style =
-        "position:fixed;top:0;left:0;width:100%;height:100%;z-index:999999;background:rgba(0,0,0,0.85);overflow:auto;";
-      container.innerHTML = html;
-      document.body.appendChild(container);
+      container.style = container.style = `
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  background: rgba(0,0,0,0.85);
+  overflow: auto;
+  pointer-events: auto; /* ✅ IMPORTANT */
+`;
 
-      // Load main script (your working script.js)
+      // ✅ IMPORTANT: attach CSS to overlay, NOT document.head
+      container.appendChild(styleEl);
+
+      // Inject HTML
+      container.innerHTML += html;
+      document.body.appendChild(container);
+      const highlightStyle = document.createElement("style");
+      highlightStyle.textContent = `
+  .gaze-highlight {
+    box-shadow: 0 0 0 3px cyan !important;
+    border-radius: 4px;
+  }
+`;
+
+      document.head.appendChild(highlightStyle);
+
+      // Load main script
       const scriptEl = document.createElement("script");
       scriptEl.src = chrome.runtime.getURL("script.js");
       document.body.appendChild(scriptEl);
@@ -36,7 +51,7 @@ if (window.neuroNavLoaded) {
         if (msg.action === "stopNeuroNav") {
           container.remove();
           window.neuroNavLoaded = false;
-          console.log("[🧠] NeuroNav stopped.");
+          console.log(" NeuroNav stopped.");
         }
       });
     });

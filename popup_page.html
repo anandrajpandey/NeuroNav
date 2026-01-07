@@ -1,19 +1,15 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <title>NeuroNav - Multimodal Interaction</title>
-    <link rel="stylesheet" href="style.css" />
-  </head>
-  <body>
-    <h1>🧠 NeuroNav Version 2.1.0</h1>
+<body>
+  <div id="neuronav-root">
+    <h1>NeuroNav Version 2.1.0</h1>
 
-    <!-- Webcam -->
-    <video id="video" autoplay playsinline></video>
+    <!-- SINGLE VIDEO CONTAINER -->
+    <div id="video-wrapper">
+      <video id="video" autoplay playsinline></video>
+    </div>
+
     <canvas id="canvas" class="hidden"></canvas>
     <p id="gesture-text">Gesture: <span id="gesture">Detecting...</span></p>
 
-    <!-- ✅ Calibration overlay -->
     <div id="calibration-container">
       <div class="calib-dot" id="dot1"></div>
       <div class="calib-dot" id="dot2"></div>
@@ -21,13 +17,7 @@
       <div class="calib-dot" id="dot4"></div>
       <div class="calib-dot" id="dot5"></div>
     </div>
+
     <button id="start-calibration">Start Calibration</button>
-
-    <!-- MediaPipe -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
-
-    <script src="script.js"></script>
-  </body>
-</html>
+  </div>
+</body>

@@ -1,11 +1,12 @@
-let detectionPaused = false; // global flag
-let calibrationDone = false; // moved global
+let detectionPaused = false;
+let calibrationDone = false;
 let lastScrollTime = 0;
 let currentIrisPosition = null;
 let gazeCursor = null;
-let currentBlock = null; // currently focused clickable block
-let scrollingEnabled = true; // ⬆ new flag for controlling scrolling
+let currentBlock = null;
+let scrollingEnabled = true;
 let lastIrisUpdateTime = Date.now();
+let lastValidGaze = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
 
 /* ---------------- LOAD MEDIAPIPE LIBS ---------------- */
 async function loadMediaPipe() {
@@ -58,11 +59,10 @@ function findNearestBlock(gazeX, gazeY, blocks) {
   return nearest;
 }
 function highlightBlock(el) {
-  // If no valid element, just remove any previous highlight
   document
     .querySelectorAll(".gaze-highlight")
     .forEach((e) => e.classList.remove("gaze-highlight"));
-  if (!el) return; // ✅ prevents crash
+  if (!el) return;
 
   el.classList.add("gaze-highlight");
 }
@@ -260,7 +260,6 @@ function initNeuroNav() {
   }
 
   function handleIrisTracking(landmarks) {
-    // Always update timestamp first
     lastIrisUpdateTime = Date.now();
     if (detectionPaused || !calibrationDone) return;
 
@@ -275,11 +274,16 @@ function initNeuroNav() {
 
     // ---- NORMALIZATION ----
     const { top, bottom, left, right } = calibrationData;
-    const normX = (avgX - left.x) / (right.x - left.x);
-    const normY = (avgY - top.y) / (bottom.y - top.y);
 
-    const screenX = normX * window.innerWidth;
-    const screenY = normY * window.innerHeight;
+    let normX = (avgX - left.x) / (right.x - left.x);
+    let normY = (avgY - top.y) / (bottom.y - top.y);
+
+    // 🛑 HARD CLAMP (CRITICAL)
+    normX = Math.min(1, Math.max(0, normX));
+    normY = Math.min(1, Math.max(0, normY));
+
+    let screenX = normX * window.innerWidth;
+    let screenY = normY * window.innerHeight;
 
     // ---- INIT SMOOTH STATE ----
     if (!window.gazeSmooth) {
@@ -301,12 +305,26 @@ function initNeuroNav() {
       window.gazeSmooth.y = alpha * screenY + (1 - alpha) * window.gazeSmooth.y;
     }
 
+    // 🛑 SAFETY CLAMP AFTER SMOOTHING
+    window.gazeSmooth.x = Math.min(
+      window.innerWidth,
+      Math.max(0, window.gazeSmooth.x)
+    );
+    window.gazeSmooth.y = Math.min(
+      window.innerHeight,
+      Math.max(0, window.gazeSmooth.y)
+    );
+
+    // ✅ STORE LAST VALID GAZE
+    lastValidGaze.x = window.gazeSmooth.x;
+    lastValidGaze.y = window.gazeSmooth.y;
+
     // ---- RENDER CURSOR ----
     if (gazeCursor) {
       gazeCursor.style.transform = `translate(${window.gazeSmooth.x}px, ${window.gazeSmooth.y}px)`;
     }
 
-    // ---- SCROLL (USING SMOOTHED GAZE) ----
+    // ---- SCROLL ----
     const now = Date.now();
     if (scrollingEnabled && now - lastScrollTime > 150) {
       if (normY < 0.3) window.scrollBy(0, -30);
@@ -314,7 +332,7 @@ function initNeuroNav() {
       lastScrollTime = now;
     }
 
-    // ---- BLOCK SELECTION (USE SMOOTHED COORDS) ----
+    // ---- BLOCK SELECTION ----
     const blocks = getClickableBlocks();
     const nearestBlock = findNearestBlock(
       window.gazeSmooth.x,
@@ -358,23 +376,39 @@ function initNeuroNav() {
     height: 480,
   });
   camera.start();
-  // ----- LOST GAZE WATCHDOG (RUNS ONCE) -----
+  // ----- LOST GAZE WATCHDOG (HARD RESET) -----
+  // ----- LOST GAZE WATCHDOG (AUTHORITATIVE) -----
   setInterval(() => {
     if (!calibrationDone || !gazeCursor) return;
 
-    if (Date.now() - lastIrisUpdateTime > 5000) {
-      console.log("[🌀] Gaze lost — recentring");
+    const gazeStale = Date.now() - lastIrisUpdateTime > 5000;
+
+    if (gazeStale) {
+      console.warn("[🌀] Gaze stale — recentring");
 
       const cx = window.innerWidth / 2;
       const cy = window.innerHeight / 2;
 
+      // 🔧 HARD RESET gaze math
       window.gazeSmooth = { x: cx, y: cy };
+      lastValidGaze = { x: cx, y: cy };
+      lastScrollTime = Date.now();
+
+      // 🔧 Reset iris baseline IF AVAILABLE
+      if (currentIrisPosition) {
+        calibrationData.center = { ...currentIrisPosition };
+      }
+
+      // 👁️ Force cursor sync
       gazeCursor.style.transition = "transform 0.4s ease-out";
       gazeCursor.style.transform = `translate(${cx}px, ${cy}px)`;
 
       setTimeout(() => {
         gazeCursor.style.transition = "transform 0.05s linear";
       }, 450);
+
+      // 🧯 CRITICAL: mark recovery as fresh
+      lastIrisUpdateTime = Date.now();
     }
   }, 1000);
 
@@ -451,8 +485,10 @@ function transformUIAfterCalibration() {
   if (startBtn) startBtn.remove();
 
   /* 🔧 MAKE OVERLAY NON-BLOCKING */
+
   overlay.style.background = "transparent";
-  overlay.style.pointerEvents = "none"; // allow page interaction
+  overlay.style.pointerEvents = "none";
+
   overlay.style.position = "fixed";
   overlay.style.top = "0";
   overlay.style.left = "0";
@@ -479,13 +515,46 @@ function transformUIAfterCalibration() {
   const pauseBtn = document.createElement("button");
   pauseBtn.textContent = "⏸️ Pause";
   pauseBtn.style = baseBtnStyle();
+
   pauseBtn.onclick = () => {
     detectionPaused = !detectionPaused;
-    pauseBtn.textContent = detectionPaused ? "▶️ Resume" : "⏸️ Pause";
-    console.log(
-      detectionPaused ? "[⏸️] Detection paused." : "[▶️] Detection resumed."
-    );
+
+    if (detectionPaused) {
+      pauseBtn.textContent = "▶️ Resume";
+      console.log("[⏸️] Detection paused — freezing gaze");
+
+      // 🧊 Freeze last valid gaze
+      if (window.gazeSmooth) {
+        lastValidGaze = { ...window.gazeSmooth };
+      }
+    } else {
+      pauseBtn.textContent = "⏸️ Pause";
+      console.log("[▶️] Detection resumed — restoring gaze");
+
+      // 🎯 Restore gaze INSIDE viewport
+      const cx = lastValidGaze?.x ?? window.innerWidth / 2;
+      const cy = lastValidGaze?.y ?? window.innerHeight / 2;
+
+      // 🔧 HARD RESET gaze math
+      window.gazeSmooth = { x: cx, y: cy };
+      lastScrollTime = Date.now();
+
+      // 🔧 Re-baseline iris to current position
+      if (currentIrisPosition) {
+        calibrationData.center = { ...currentIrisPosition };
+      }
+
+      // 👁️ Force cursor + logic sync
+      if (gazeCursor) {
+        gazeCursor.style.transition = "transform 0.2s ease-out";
+        gazeCursor.style.transform = `translate(${cx}px, ${cy}px)`;
+        setTimeout(() => {
+          gazeCursor.style.transition = "transform 0.05s linear";
+        }, 250);
+      }
+    }
   };
+
   controls.appendChild(pauseBtn);
 
   /* ✖ Stop */
@@ -529,6 +598,7 @@ function minimizeOverlay() {
   overlay.style.boxShadow = "0 0 10px rgba(0,0,0,0.4)";
   overlay.style.overflow = "hidden";
   overlay.style.zIndex = "999999";
+  overlay.style.pointerEvents = "auto";
   overlay.innerHTML = ""; // clear existing content
 
   // ✅ Add webcam feed only
@@ -742,8 +812,9 @@ function makeDraggable(el) {
 function initVoiceControl() {
   const SpeechRecognition =
     window.SpeechRecognition || window.webkitSpeechRecognition;
+
   if (!SpeechRecognition) {
-    console.warn("[🎙️] Speech recognition not supported in this browser.");
+    console.warn("[🎙️] Speech recognition not supported.");
     return;
   }
 
@@ -752,43 +823,44 @@ function initVoiceControl() {
   recognition.continuous = true;
   recognition.interimResults = false;
 
-  let scrollPaused = false;
-
   recognition.onresult = (event) => {
     const transcript = event.results[event.results.length - 1][0].transcript
       .trim()
       .toLowerCase();
+
     console.log("[🎙️ Voice Command]:", transcript);
 
-    // --- Voice "click"
-    if (transcript.includes("click")) {
-      if (gazeCursor) {
-        const rect = gazeCursor.getBoundingClientRect();
-        const target = document.elementFromPoint(rect.left + 10, rect.top + 10);
-        if (target) {
-          target.click();
-          console.log("[🖱️] Voice clicked:", target);
-          gazeCursor.style.transform += " scale(1.4)";
-          setTimeout(() => {
-            gazeCursor.style.transform = gazeCursor.style.transform.replace(
-              " scale(1.4)",
-              ""
-            );
-          }, 150);
+    /* 🎯 SELECT (same as smile) */
+    if (transcript.includes("select")) {
+      if (calibrationDone && currentBlock?.element) {
+        currentBlock.element.click();
+        console.log("[🖱️] Voice SELECT");
+
+        if (gazeCursor) {
+          gazeCursor.style.boxShadow = "0 0 25px lime";
+          setTimeout(() => (gazeCursor.style.boxShadow = ""), 300);
         }
       }
+      return;
     }
 
-    // --- Voice "pause scrolling"
-    else if (transcript.includes("pause")) {
-      scrollPaused = true;
-      console.log("[🛑] Scrolling paused — gaze navigation still active.");
+    /* 🛑 PAUSE SCROLLING */
+    if (transcript.includes("pause")) {
+      if (scrollingEnabled) {
+        scrollingEnabled = false;
+        console.log("[🛑] Scrolling paused (voice)");
+      }
+      return;
     }
 
-    // --- Voice "resume scrolling"
-    else if (transcript.includes("resume")) {
-      scrollPaused = false;
-      console.log("[▶️] Scrolling resumed.");
+    /* ▶️ RESUME SCROLLING */
+    if (transcript.includes("resume")) {
+      if (!scrollingEnabled) {
+        scrollingEnabled = true;
+        lastScrollTime = Date.now(); // prevent jump
+        console.log("[▶️] Scrolling resumed (voice)");
+      }
+      return;
     }
   };
 
@@ -796,19 +868,11 @@ function initVoiceControl() {
     console.error("[❌] Voice recognition error:", e);
 
   recognition.onend = () => {
-    console.log("[🔁] Restarting voice recognition...");
-    recognition.start();
+    recognition.start(); // auto-restart
   };
 
   recognition.start();
-  console.log("[🎙️] Voice control initialized (click + scroll toggle)");
-
-  // 🧭 Patch the scrolling function to respect scrollPaused
-  const originalScroll = window.scrollBy;
-  window.scrollBy = function (x, y) {
-    if (scrollPaused) return; // ignore scroll commands while paused
-    originalScroll.call(window, x, y);
-  };
+  console.log("[🎙️] Voice control initialized");
 }
 
 // Initialize after NeuroNav loads
